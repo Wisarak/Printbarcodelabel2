@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>نظام إدخال درجات الطلاب</title>
+  <script src="https://cdn.sheetjs.com/xlsx-0.18.5/package/dist/xlsx.full.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; direction: rtl; background-color: #f4f4f4; text-align: right; }
+    .container { max-width: 900px; margin: auto; background: #fff; padding: 20px; border-radius: 10px; }
+    input, select, button { width: 100%; padding: 10px; margin: 10px 0; border-radius: 5px; border: 1px solid #ccc; }
+    button { background: #007bff; color: #fff; cursor: pointer; }
+    button:hover { background: #0056b3; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+    th { background: #007bff; color: white; }
+    #reader { width: 100%; max-width: 400px; margin: auto; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>إدخال بيانات الطالب</h2>
+    <input type="text" id="studentName" placeholder="أدخل اسم الطالب">
+    <input type="text" id="studentClass" placeholder="أدخل الصف">
+    <button onclick="addStudent()">إضافة طالب</button>
+
+    <h2>استيراد الطلاب من ملف Excel</h2>
+    <input type="file" id="excelFile">
+    <button onclick="importFromExcel()">استيراد من Excel</button>
+
+    <h2>البحث باستخدام الباركود</h2>
+    <div id="reader"></div>
+    <p id="studentDisplay">اسم الطالب: <span id="studentNameDisplay"></span></p>
+
+    <h2>إدخال الدرجات</h2>
+    <input type="text" id="studentBarcode" placeholder="أدخل الباركود أو امسحه" oninput="updateStudentDisplay()">
+    <select id="subject">
+      <option value="إسلامية">إسلامية</option>
+      <option value="اللغة العربية">اللغة العربية</option>
+      <option value="اللغة الإنجليزية">اللغة الإنجليزية</option>
+      <option value="اجتماعيات">اجتماعيات</option>
+      <option value="كيمياء">كيمياء</option>
+      <option value="فيزياء">فيزياء</option>
+      <option value="أحياء">أحياء</option>
+      <option value="علم الأرض">علم الأرض</option>
+      <option value="رياضة">رياضة</option>
+      <option value="فنية">فنية</option>
+    </select>
+    <input type="number" id="grade" placeholder="أدخل الدرجة">
+    <button onclick="addGrade()">إضافة</button>
+    <button onclick="exportByClass()" style="background: #28a745;">تصدير حسب الصفوف</button>
+    <button onclick="printBarcodes()" style="background: #6c757d;">طباعة باركودات</button>
+
+    <table>
+      <thead>
+        <tr>
+          <th>الباركود</th>
+          <th>اسم الطالب</th>
+          <th>الصف</th>
+          <th>إسلامية</th>
+          <th>اللغة العربية</th>
+          <th>اللغة الإنجليزية</th>
+          <th>اجتماعيات</th>
+          <th>كيمياء</th>
+          <th>فيزياء</th>
+          <th>أحياء</th>
+          <th>علم الأرض</th>
+          <th>رياضة</th>
+          <th>فنية</th>
+          <th>إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="gradesTable"></tbody>
+    </table>
+  </div>
+
+  <audio id="beepSound" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" preload="auto"></audio>
+
+  <script>
+    let students = JSON.parse(localStorage.getItem("students")) || {};
+    let barcodeCounter = parseInt(localStorage.getItem("barcodeCounter")) || 100000;
+
+    function saveData() {
+      localStorage.setItem("students", JSON.stringify(students));
+      localStorage.setItem("barcodeCounter", barcodeCounter.toString());
+    }
+
+    function addStudent() {
+      const name = document.getElementById("studentName").value.trim();
+      const className = document.getElementById("studentClass").value.trim();
+      if (!name || !className) return alert("يرجى إدخال الاسم والصف");
+
+      const barcode = (barcodeCounter++).toString();
+      students[barcode] = { name, className, grades: {} };
+      saveData();
+      updateTable();
+      document.getElementById("studentName").value = "";
+      document.getElementById("studentClass").value = "";
+    }
+
+    function addGrade() {
+      const barcode = document.getElementById("studentBarcode").value.trim();
+      const subject = document.getElementById("subject").value;
+      const grade = document.getElementById("grade").value.trim();
+      if (!students[barcode]) return alert("لم يتم العثور على الطالب");
+      if (grade === "" || isNaN(grade)) return alert("يرجى إدخال درجة صحيحة");
+      students[barcode].grades[subject] = grade;
+      saveData();
+      updateTable();
+      document.getElementById("grade").value = "";
+    }
+
+    function deleteStudent(barcode) {
+      if (confirm("هل أنت متأكد من حذف هذا الطالب؟")) {
+        delete students[barcode];
+        saveData();
+        updateTable();
+      }
+    }
+
+    function updateTable() {
+      const tbody = document.getElementById("gradesTable");
+      tbody.innerHTML = "";
+      Object.entries(students).forEach(([barcode, student]) => {
+        let row = `<tr>
+          <td>${barcode}</td>
+          <td>${student.name}</td>
+          <td>${student.className || ""}</td>`;
+        ["إسلامية", "اللغة العربية", "اللغة الإنجليزية", "اجتماعيات", "كيمياء", "فيزياء", "أحياء", "علم الأرض", "رياضة", "فنية"].forEach(subject => {
+          row += `<td>${student.grades[subject] || ""}</td>`;
+        });
+        row += `<td><button onclick="deleteStudent('${barcode}')" style="background: red;">حذف</button></td></tr>`;
+        tbody.innerHTML += row;
+      });
+    }
+
+    function updateStudentDisplay() {
+      const barcode = document.getElementById("studentBarcode").value.trim();
+      const display = document.getElementById("studentNameDisplay");
+      display.textContent = students[barcode] ? students[barcode].name : "غير معروف";
+    }
+
+    function startScanner() {
+      const html5QrCode = new Html5Qrcode("reader");
+      html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 250 },
+        (decodedText) => {
+          document.getElementById("studentBarcode").value = decodedText;
+          updateStudentDisplay();
+          document.getElementById("beepSound").play();
+        },
+        () => {}
+      ).catch((err) => console.error("خطأ في تشغيل الماسح: ", err));
+    }
+
+    function exportByClass() {
+      const grouped = {};
+      Object.entries(students).forEach(([barcode, student]) => {
+        const className = student.className || "غير معروف";
+        if (!grouped[className]) grouped[className] = [];
+        grouped[className].push({
+          "الباركود": barcode,
+          "اسم الطالب": student.name,
+          "الصف": student.className,
+          ...student.grades
+        });
+      });
+      Object.entries(grouped).forEach(([className, data]) => {
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(data);
+        XLSX.utils.book_append_sheet(wb, ws, "الطلاب");
+        XLSX.writeFile(wb, `بيانات_الصف_${className}.xlsx`);
+      });
+    }
+
+    function importFromExcel() {
+      const input = document.getElementById("excelFile");
+      if (!input.files.length) return alert("يرجى اختيار ملف Excel");
+      const file = input.files[0];
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: "array" });
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const json = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+          let count = 0;
+          json.forEach((row) => {
+            const keys = Object.keys(row).reduce((acc, key) => {
+              acc[key.replace(/\s/g, "").toLowerCase()] = row[key];
+              return acc;
+            }, {});
+            const name = keys["اسمالطالب"];
+            const className = keys["الصف"];
+            if (name && className) {
+              const barcode = (barcodeCounter++).toString();
+              students[barcode] = { name: name.trim(), className: className.trim(), grades: {} };
+              count++;
+            }
+          });
+          saveData();
+          updateTable();
+          input.value = "";
+          alert(`تم استيراد ${count} طالب بنجاح`);
+        } catch (err) {
+          console.error("فشل في قراءة ملف Excel:", err);
+          alert("حدث خطأ أثناء قراءة الملف. تأكد من أن التنسيق صحيح.");
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function printBarcodes() {
+      const subjects = ["إسلامية", "اللغة العربية", "اللغة الإنجليزية", "اجتماعيات", "كيمياء", "فيزياء", "أحياء", "علم الأرض", "رياضة", "فنية"];
+      const studentsArray = Object.entries(students);
+      const win = window.open("", "BarcodePrint", "width=400,height=600");
+      win.document.write(`
+        <html>
+          <head>
+            <title>طباعة ملصقات الباركود</title>
+            <style>
+              @media print {
+                body { margin: 0; }
+                .label { page-break-after: always; }
+              }
+              body {
+                font-family: sans-serif;
+                direction: rtl;
+                text-align: right;
+                padding: 0.2cm;
+                background: white;
+              }
+              .label {
+                width: 10cm;
+                height: 2.2cm;
+                border: 1px solid #000;
+                border-radius: 5px;
+                padding: 5px;
+                margin: auto;
+                margin-bottom: 0.3cm;
+                box-sizing: border-box;
+                display: flex;
+                flex-direction: column;
+                justify-content: space-between;
+                font-size: 12px;
+              }
+              .barcode-subject {
+                font-weight: bold;
+                margin-bottom: 5px;
+                font-size: 13px;
+              }
+              .barcode-info {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+              }
+              .barcode-name {
+                width: 40%;
+                text-align: left;
+                font-size: 11px;
+              }
+              svg {
+                width: 55%;
+                height: 40px;
+              }
+            </style>
+          </head>
+          <body>`);
+      let svgCounter = 0;
+      for (let i = 0; i < studentsArray.length; i++) {
+        const [barcode, student] = studentsArray[i];
+        subjects.forEach((subject) => {
+          win.document.write(`
+            <div class="label">
+              <div class="barcode-subject">
+                ${subject}<br><span style="font-weight: normal; font-size: 11px;">الصف: ${student.className || ""}</span>
+              </div>
+              <div class="barcode-info">
+                <svg id="barcode-${svgCounter}"></svg>
+                <div class="barcode-name">${student.name}</div>
+              </div>
+            </div>`);
+          svgCounter++;
+        });
+      }
+      win.document.write(`</body></html>`);
+      win.document.close();
+      win.onload = () => {
+        svgCounter = 0;
+        for (let i = 0; i < studentsArray.length; i++) {
+          const [barcode] = studentsArray[i];
+          for (let s = 0; s < subjects.length; s++) {
+            const svgElem = win.document.getElementById(`barcode-${svgCounter}`);
+            JsBarcode(svgElem, barcode, {
+              format: "CODE128",
+              width: 2,
+              height: 40,
+              displayValue: false
+            });
+            svgCounter++;
+          }
+        }
+        setTimeout(() => win.print(), 1000);
+      };
+    }
+
+    window.onload = function () {
+      updateTable();
+      startScanner();
+    };
+  </script>
+</body>
+</html>
